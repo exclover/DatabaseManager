@@ -211,6 +211,60 @@ db.query("kullanicilar")
     });
 ```
 
+
+
+
+## Kullanım
+
+### Maven ile Kullanım
+
+JitPack üzerinden `DatabaseManager` kütüphanesini Maven projenize eklemek için aşağıdaki adımları takip edebilirsiniz:
+
+1. **JitPack Repository'yi ekleyin:**
+
+```xml
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://www.jitpack.io</url>
+    </repository>
+</repositories>
+```
+
+2. **Bağımlılığı ekleyin:**
+
+```xml
+<dependency>
+    <groupId>com.github.exclover</groupId>
+    <artifactId>DatabaseManager</artifactId>
+    <version>1.0-SNAPSHOT</version>
+</dependency>
+```
+
+### Gradle ile Kullanım
+
+Gradle ile `DatabaseManager` kütüphanesini projeye dahil etmek için şu adımları takip edin:
+
+1. **JitPack Repository'yi ekleyin:**
+
+```gradle
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+```
+
+2. **Bağımlılığı ekleyin:**
+
+```gradle
+dependencies {
+    implementation 'com.github.exclover:DatabaseManager:1.0-SNAPSHOT'
+}
+```
+
+Her iki yöntemle de projede `DatabaseManager`'ı kullanabilirsiniz. JitPack, projenin her sürümü için otomatik olarak derlemeler sağlar, bu yüzden en güncel sürümle çalışabilirsiniz.
+
+
+
 ## Lisans
 
 Bu kütüphane MIT lisansı altında lisanslanmıştır. 
