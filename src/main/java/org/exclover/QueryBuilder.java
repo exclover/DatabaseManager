@@ -64,7 +64,7 @@ public class QueryBuilder {
      * @return QueryBuilder nesnesi
      */
     public QueryBuilder where(String columnName, Object value) {
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             whereClause.append(" AND ");
         }
         whereClause.append(columnName).append(" = ?");
@@ -79,7 +79,7 @@ public class QueryBuilder {
      * @return QueryBuilder nesnesi
      */
     public QueryBuilder whereLike(String columnName, String value) {
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             whereClause.append(" AND ");
         }
         whereClause.append(columnName).append(" LIKE ?");
@@ -94,7 +94,7 @@ public class QueryBuilder {
      * @return QueryBuilder nesnesi
      */
     public QueryBuilder whereGreaterThan(String columnName, Object value) {
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             whereClause.append(" AND ");
         }
         whereClause.append(columnName).append(" > ?");
@@ -109,7 +109,7 @@ public class QueryBuilder {
      * @return QueryBuilder nesnesi
      */
     public QueryBuilder whereLessThan(String columnName, Object value) {
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             whereClause.append(" AND ");
         }
         whereClause.append(columnName).append(" < ?");
@@ -124,7 +124,7 @@ public class QueryBuilder {
      * @return QueryBuilder nesnesi
      */
     public QueryBuilder orWhere(String columnName, Object value) {
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             whereClause.append(" OR ");
         }
         whereClause.append(columnName).append(" = ?");
@@ -204,7 +204,7 @@ public class QueryBuilder {
 
         query.append(tableName);
 
-        if (!whereClause.isEmpty()) {
+        if (whereClause.length() > 0) {
             query.append(" WHERE ").append(whereClause);
         }
 
