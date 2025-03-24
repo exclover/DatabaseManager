@@ -101,6 +101,18 @@ public class TableBuilder {
     }
 
     /**
+     * Doğrudan SQL ifadeleriyle sütun tanımlar (özel kısıtlamalar için)
+     * @param columnName Sütun adı
+     * @param type Veri tipi
+     * @param constraints Kısıtlamalar
+     * @return TableBuilder nesnesi
+     */
+    public TableBuilder addColumn(String columnName, String type, String constraints) {
+        database.addColumn(columnName, type, constraints);
+        return this;
+    }
+
+    /**
      * Tabloyu oluşturur
      * @return Database nesnesi
      */

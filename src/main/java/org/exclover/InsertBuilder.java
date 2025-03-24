@@ -104,4 +104,175 @@ public class InsertBuilder {
     public long getLastInsertId() {
         return insertId;
     }
+
+    /**
+     * Veriyi tabloda günceller
+     * @param whereClause Güncelleme koşulu (örn. "id = ?")
+     * @param params WHERE koşulu için parametreler
+     * @return Güncellenen satır sayısı
+     */
+    public int executeUpdate(String whereClause, Object... params) {
+        if (whereClause == null || whereClause.isEmpty()) {
+            throw new IllegalArgumentException("Güncelleme için WHERE koşulu gereklidir");
+        }
+        
+        StringBuilder sql = new StringBuilder();
+        sql.append("UPDATE ").append(tableName).append(" SET ");
+        
+        boolean firstColumn = true;
+        // values haritasını doğrudan DBManager'dan alamayız, bu yüzden kendi değerlerimizi kullanacağız
+        java.util.Map<String, Object> values = new java.util.HashMap<>();
+        
+        try {
+            // DBManager sınıfının values field'ına reflection ile erişim
+            java.lang.reflect.Field valuesField = database.getClass().getDeclaredField("values");
+            valuesField.setAccessible(true);
+            values = (java.util.Map<String, Object>) valuesField.get(database);
+        } catch (Exception e) {
+            System.err.println("Values haritasına erişim hatası: " + e.getMessage());
+            return -1;
+        }
+        
+        java.util.List<Object> valuesList = new java.util.ArrayList<>();
+        
+        for (java.util.Map.Entry<String, Object> entry : values.entrySet()) {
+            if (!firstColumn) {
+                sql.append(", ");
+            }
+            sql.append(entry.getKey()).append(" = ?");
+            valuesList.add(entry.getValue());
+            firstColumn = false;
+        }
+        
+        // WHERE koşulunu ekle
+        sql.append(" WHERE ").append(whereClause);
+        
+        // Tüm parametreleri birleştir (önce SET değerleri, sonra WHERE parametreleri)
+        Object[] allParams = new Object[valuesList.size() + params.length];
+        int i = 0;
+        
+        for (Object value : valuesList) {
+            allParams[i++] = value;
+        }
+        
+        for (Object param : params) {
+            allParams[i++] = param;
+        }
+        
+        return database.executeUpdate(sql.toString(), allParams);
+    }
+
+    /**
+     * Veriyi tabloda asenkron olarak günceller
+     * @param whereClause Güncelleme koşulu (örn. "id = ?")
+     * @param callback Sonuç callback'i
+     * @param params WHERE koşulu için parametreler
+     */
+    public void executeUpdateAsync(String whereClause, Consumer<Integer> callback, Object... params) {
+        database.getExecutorService().submit(() -> {
+            int result = executeUpdate(whereClause, params);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Birden fazla veriyi toplu olarak ekler (Batch Insert)
+     * @param valuesList Eklenecek değerlerin listesi (her liste öğesi bir kayıt)
+     * @return Eklenen kayıt sayısı
+     */
+    public int executeBatch(java.util.List<java.util.Map<String, Object>> valuesList) {
+        if (valuesList == null || valuesList.isEmpty()) {
+            return 0;
+        }
+        
+        // Veritabanı bağlantı kontrolü
+        if (!database.isConnected()) {
+            database.reconnect();
+        }
+        
+        try {
+            // İlk kaydın sütunlarını kullanarak SQL hazırla
+            java.util.Map<String, Object> firstRecord = valuesList.get(0);
+            
+            StringBuilder columnNames = new StringBuilder();
+            StringBuilder placeholders = new StringBuilder();
+            
+            boolean first = true;
+            for (String column : firstRecord.keySet()) {
+                if (!first) {
+                    columnNames.append(", ");
+                    placeholders.append(", ");
+                }
+                
+                columnNames.append(column);
+                placeholders.append("?");
+                first = false;
+            }
+            
+            String sql = "INSERT INTO " + tableName + " (" + columnNames + ") VALUES (" + placeholders + ")";
+            
+            java.sql.Connection conn = null;
+            try {
+                // Reflection ile connection'a eriş
+                java.lang.reflect.Field connectionField = database.getClass().getDeclaredField("connection");
+                connectionField.setAccessible(true);
+                conn = (java.sql.Connection) connectionField.get(database);
+            } catch (Exception e) {
+                System.err.println("Connection'a erişim hatası: " + e.getMessage());
+                return -1;
+            }
+            
+            // Otomatik commit'i kapat (performans için)
+            boolean originalAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            
+            java.sql.PreparedStatement pstmt = conn.prepareStatement(sql);
+            
+            int batchCount = 0;
+            for (java.util.Map<String, Object> record : valuesList) {
+                int paramIndex = 1;
+                for (Object value : record.values()) {
+                    pstmt.setObject(paramIndex++, value);
+                }
+                pstmt.addBatch();
+                batchCount++;
+                
+                // Her 100 kayıtta bir batch'i işle
+                if (batchCount % 100 == 0) {
+                    pstmt.executeBatch();
+                }
+            }
+            
+            // Kalan batch'leri işle
+            if (batchCount % 100 != 0) {
+                pstmt.executeBatch();
+            }
+            
+            // Değişiklikleri kaydet ve orijinal autoCommit değerine geri dön
+            conn.commit();
+            conn.setAutoCommit(originalAutoCommit);
+            
+            pstmt.close();
+            return batchCount;
+        } catch (Exception e) {
+            System.err.println("Batch insert hatası: " + e.getMessage());
+            return -1;
+        }
+    }
+
+    /**
+     * Birden fazla veriyi toplu olarak asenkron ekler
+     * @param valuesList Eklenecek değerlerin listesi
+     * @param callback Sonuç callback'i
+     */
+    public void executeBatchAsync(java.util.List<java.util.Map<String, Object>> valuesList, Consumer<Integer> callback) {
+        database.getExecutorService().submit(() -> {
+            int result = executeBatch(valuesList);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
 }

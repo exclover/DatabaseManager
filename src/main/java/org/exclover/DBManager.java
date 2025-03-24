@@ -678,7 +678,7 @@ public class DBManager {
     }
 
     /**
-     * Tabloyu temizler (tüm verileri siler)
+     * Tabloyu temizler (tüm verileri sil - MySQL foreign key kısıtlamalarını geçici olarak devre dışı bırakır)
      * @param tableName Tablo adı
      * @return İşlem başarılı ise true
      */
@@ -692,8 +692,10 @@ public class DBManager {
                 stmt.executeUpdate("DELETE FROM " + tableName);
                 stmt.executeUpdate("DELETE FROM sqlite_sequence WHERE name='" + tableName + "'");
             } else {
-                // MySQL TRUNCATE kullanır
+                // MySQL TRUNCATE kullanır, foreign key kontrollerini geçici olarak devre dışı bırakır
+                stmt.executeUpdate("SET FOREIGN_KEY_CHECKS=0");
                 stmt.executeUpdate("TRUNCATE TABLE " + tableName);
+                stmt.executeUpdate("SET FOREIGN_KEY_CHECKS=1");
             }
             stmt.close();
             System.out.println("Table truncated: " + tableName);
@@ -877,8 +879,423 @@ public class DBManager {
             }
         });
     }
+
+    /**
+     * Belirlenen aralıktaki verileri getirir (sayfalama için)
+     * @param tableName Tablo adı
+     * @param offset Başlangıç indeksi
+     * @param limit Maksimum kayıt sayısı
+     * @return Kayıt listesi
+     */
+    public List<Map<String, Object>> paginate(String tableName, int offset, int limit) {
+        if (!ensureConnection()) return new ArrayList<>();
+        
+        try {
+            String sql = "SELECT * FROM " + tableName + " LIMIT " + limit + " OFFSET " + offset;
+            
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+            
+            List<Map<String, Object>> resultList = new ArrayList<>();
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                
+                resultList.add(row);
+            }
+            
+            stmt.close();
+            return resultList;
+        } catch (SQLException e) {
+            System.err.println("Pagination error: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Belirlenen aralıktaki verileri asenkron getirir
+     * @param tableName Tablo adı
+     * @param offset Başlangıç indeksi
+     * @param limit Maksimum kayıt sayısı
+     * @param callback Sonuç callback'i
+     */
+    public void paginateAsync(String tableName, int offset, int limit, Consumer<List<Map<String, Object>>> callback) {
+        executorService.submit(() -> {
+            List<Map<String, Object>> result = paginate(tableName, offset, limit);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Veritabanında ham SQL sorgusu çalıştırır ve sonuçları döndürür
+     * @param sql SQL sorgusu
+     * @param params Sorgu parametreleri
+     * @return Sorgu sonuçları
+     */
+    public List<Map<String, Object>> executeQuery(String sql, Object... params) {
+        if (!ensureConnection()) return new ArrayList<>();
+        
+        try {
+            PreparedStatement pstmt = connection.prepareStatement(sql);
+            
+            for (int i = 0; i < params.length; i++) {
+                pstmt.setObject(i + 1, params[i]);
+            }
+            
+            ResultSet rs = pstmt.executeQuery();
+            
+            List<Map<String, Object>> resultList = new ArrayList<>();
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                
+                resultList.add(row);
+            }
+            
+            pstmt.close();
+            return resultList;
+        } catch (SQLException e) {
+            System.err.println("Execute query error: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Raw SQL sorgusunu asenkron çalıştırır ve sonuçları QueryResult listesi olarak döndürür
+     * @param sql SQL sorgusu
+     * @param callback Sonuç callback'i
+     * @param params Sorgu parametreleri
+     */
+    public void executeQueryResultsAsync(String sql, Consumer<List<QueryResult>> callback, Object... params) {
+        executorService.submit(() -> {
+            List<QueryResult> result = executeQueryResults(sql, params);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Sayfalama sorgusunu asenkron çalıştırır ve sonuçları QueryResult listesi olarak döndürür
+     * @param tableName Tablo adı
+     * @param offset Başlangıç indeksi
+     * @param limit Maksimum kayıt sayısı
+     * @param callback Sonuç callback'i
+     */
+    public void paginateResultsAsync(String tableName, int offset, int limit, Consumer<List<QueryResult>> callback) {
+        executorService.submit(() -> {
+            List<QueryResult> result = paginateResults(tableName, offset, limit);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Tablo yapısını (sütunları) getirir
+     * @param tableName Tablo adı
+     * @return Sütun bilgileri listesi
+     */
+    public List<Map<String, Object>> getTableStructure(String tableName) {
+        if (!ensureConnection()) return new ArrayList<>();
+        
+        List<Map<String, Object>> columns = new ArrayList<>();
+        
+        try {
+            if (databaseType == DatabaseType.SQLITE) {
+                // SQLite için PRAGMA kullanımı
+                String sql = "PRAGMA table_info(" + tableName + ")";
+                Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(sql);
+                
+                while (rs.next()) {
+                    Map<String, Object> column = new HashMap<>();
+                    column.put("name", rs.getString("name"));
+                    column.put("type", rs.getString("type"));
+                    column.put("notnull", rs.getBoolean("notnull"));
+                    column.put("default_value", rs.getString("dflt_value"));
+                    column.put("primary_key", rs.getBoolean("pk"));
+                    columns.add(column);
+                }
+                
+                stmt.close();
+            } else {
+                // MySQL için INFORMATION_SCHEMA kullanımı
+                String sql = "SELECT COLUMN_NAME AS name, DATA_TYPE AS type, " +
+                        "IS_NULLABLE AS nullable, COLUMN_DEFAULT AS default_value, " +
+                        "COLUMN_KEY AS key_type " +
+                        "FROM INFORMATION_SCHEMA.COLUMNS " +
+                        "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
+                
+                PreparedStatement pstmt = connection.prepareStatement(sql);
+                pstmt.setString(1, databaseName);
+                pstmt.setString(2, tableName);
+                
+                ResultSet rs = pstmt.executeQuery();
+                
+                while (rs.next()) {
+                    Map<String, Object> column = new HashMap<>();
+                    column.put("name", rs.getString("name"));
+                    column.put("type", rs.getString("type"));
+                    column.put("nullable", rs.getString("nullable").equals("YES"));
+                    column.put("default_value", rs.getString("default_value"));
+                    column.put("primary_key", rs.getString("key_type").equals("PRI"));
+                    columns.add(column);
+                }
+                
+                pstmt.close();
+            }
+            
+            return columns;
+        } catch (SQLException e) {
+            System.err.println("Get table structure error: " + e.getMessage());
+            return columns;
+        }
+    }
+
+    /**
+     * Tablo yapısını asenkron getirir
+     * @param tableName Tablo adı
+     * @param callback Sonuç callback'i
+     */
+    public void getTableStructureAsync(String tableName, Consumer<List<Map<String, Object>>> callback) {
+        executorService.submit(() -> {
+            List<Map<String, Object>> result = getTableStructure(tableName);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Veri eklemek için değerler haritasını döndürür 
+     * (InsertBuilder için gerekli)
+     * @return Values haritası
+     */
+    public Map<String, Object> getValues() {
+        return new HashMap<>(values);
+    }
+
+    /**
+     * Veri eklemek için değerler haritasını temizler
+     */
+    public void clearValues() {
+        values.clear();
+    }
+
+    /**
+     * Veritabanındaki tabloları listeler
+     * @return Tablo listesi
+     */
+    public List<String> getTables() {
+        if (!ensureConnection()) return new ArrayList<>();
+        
+        List<String> tables = new ArrayList<>();
+        
+        try {
+            if (databaseType == DatabaseType.SQLITE) {
+                // SQLite için sorgu
+                String sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
+                Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(sql);
+                
+                while (rs.next()) {
+                    tables.add(rs.getString("name"));
+                }
+                
+                stmt.close();
+            } else {
+                // MySQL için sorgu
+                String sql = "SHOW TABLES";
+                Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(sql);
+                
+                while (rs.next()) {
+                    tables.add(rs.getString(1));
+                }
+                
+                stmt.close();
+            }
+            
+            return tables;
+        } catch (SQLException e) {
+            System.err.println("Get tables error: " + e.getMessage());
+            return tables;
+        }
+    }
+
+    /**
+     * Veritabanındaki tabloları asenkron listeler
+     * @param callback Sonuç callback'i
+     */
+    public void getTablesAsync(Consumer<List<String>> callback) {
+        executorService.submit(() -> {
+            List<String> result = getTables();
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Veritabanında bir index oluşturur
+     * @param tableName Tablo adı
+     * @param indexName Index adı
+     * @param columnNames Index oluşturulacak sütun adları
+     * @param unique Benzersiz index için true
+     * @return İşlem başarılı ise true
+     */
+    public boolean createIndex(String tableName, String indexName, String[] columnNames, boolean unique) {
+        if (!ensureConnection()) return false;
+        
+        try {
+            StringBuilder sql = new StringBuilder();
+            sql.append("CREATE ");
+            
+            if (unique) {
+                sql.append("UNIQUE ");
+            }
+            
+            sql.append("INDEX IF NOT EXISTS ").append(indexName)
+               .append(" ON ").append(tableName).append(" (");
+            
+            for (int i = 0; i < columnNames.length; i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                sql.append(columnNames[i]);
+            }
+            
+            sql.append(")");
+            
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql.toString());
+            stmt.close();
+            
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Create index error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Veritabanında asenkron index oluşturur
+     * @param tableName Tablo adı
+     * @param indexName Index adı
+     * @param columnNames Index oluşturulacak sütun adları
+     * @param unique Benzersiz index için true
+     * @param callback Sonuç callback'i
+     */
+    public void createIndexAsync(String tableName, String indexName, String[] columnNames, boolean unique, Consumer<Boolean> callback) {
+        executorService.submit(() -> {
+            boolean result = createIndex(tableName, indexName, columnNames, unique);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Veritabanında Foreign Key (yabancı anahtar) oluşturur
+     * @param table Tablo adı
+     * @param column Sütun adı
+     * @param referenceTable Referans tablo adı
+     * @param referenceColumn Referans sütun adı
+     * @param onDeleteAction FK silindiğinde yapılacak işlem (CASCADE, SET NULL, RESTRICT)
+     * @return İşlem başarılı ise true
+     */
+    public boolean addForeignKey(String table, String column, String referenceTable, 
+                               String referenceColumn, String onDeleteAction) {
+        if (!ensureConnection()) return false;
+        
+        // MySQL'de ALTER TABLE kullanmalıyız
+        if (databaseType == DatabaseType.MYSQL) {
+            try {
+                String constraintName = "fk_" + table + "_" + column;
+                String sql = "ALTER TABLE " + table + 
+                            " ADD CONSTRAINT " + constraintName + 
+                            " FOREIGN KEY (" + column + ") REFERENCES " + 
+                            referenceTable + "(" + referenceColumn + ")";
+                
+                if (onDeleteAction != null && !onDeleteAction.isEmpty()) {
+                    sql += " ON DELETE " + onDeleteAction;
+                }
+                
+                Statement stmt = connection.createStatement();
+                stmt.execute(sql);
+                stmt.close();
+                
+                return true;
+            } catch (SQLException e) {
+                System.err.println("Add foreign key error: " + e.getMessage());
+                return false;
+            }
+        } else {
+            // SQLite'da FOREIGN KEY desteği var ama tablo oluşturma sırasında tanımlanmalı
+            System.err.println("SQLite'da tablo oluşturulduktan sonra foreign key eklenemez.");
+            return false;
+        }
+    }
+
+    /**
+     * Veritabanında asenkron Foreign Key oluşturur
+     * @param table Tablo adı
+     * @param column Sütun adı
+     * @param referenceTable Referans tablo adı
+     * @param referenceColumn Referans sütun adı
+     * @param onDeleteAction FK silindiğinde yapılacak işlem
+     * @param callback Sonuç callback'i
+     */
+    public void addForeignKeyAsync(String table, String column, String referenceTable, 
+                                  String referenceColumn, String onDeleteAction, Consumer<Boolean> callback) {
+        executorService.submit(() -> {
+            boolean result = addForeignKey(table, column, referenceTable, referenceColumn, onDeleteAction);
+            if (callback != null) {
+                callback.accept(result);
+            }
+        });
+    }
+
+    /**
+     * Raw SQL sorgusu çalıştırır ve sonuçları QueryResult listesi olarak döndürür
+     * @param sql SQL sorgusu
+     * @param params Sorgu parametreleri
+     * @return QueryResult listesi
+     */
+    public List<QueryResult> executeQueryResults(String sql, Object... params) {
+        List<Map<String, Object>> mapResults = executeQuery(sql, params);
+        return QueryResult.fromList(mapResults);
+    }
+
+    /**
+     * Sayfalama sorgusu çalıştırır ve sonuçları QueryResult listesi olarak döndürür
+     * @param tableName Tablo adı
+     * @param offset Başlangıç indeksi
+     * @param limit Maksimum kayıt sayısı
+     * @return QueryResult listesi
+     */
+    public List<QueryResult> paginateResults(String tableName, int offset, int limit) {
+        List<Map<String, Object>> mapResults = paginate(tableName, offset, limit);
+        return QueryResult.fromList(mapResults);
+    }
 }
-
-
-
 
